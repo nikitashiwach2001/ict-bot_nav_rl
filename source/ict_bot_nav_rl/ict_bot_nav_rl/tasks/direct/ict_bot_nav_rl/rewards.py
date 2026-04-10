@@ -130,6 +130,19 @@ def penalize_backwards_movement(env: ManagerBasedEnv) -> torch.Tensor:
 
 # ── Sparse terminal reward ────────────────────────────────────────────────────
 
+def waypoint_reached(env: ManagerBasedEnv) -> torch.Tensor:
+    """Binary 0/1 reward each time the robot reaches an intermediate waypoint.
+
+    Fires on the same step that _advance_waypoints() will advance the index,
+    i.e. when the robot enters waypoint_reach_threshold of _goal_pos.
+    """
+    if not hasattr(env, "_goal_pos"):
+        return torch.zeros(env.num_envs, device=env.device)
+    robot_xy = env.scene["robot"].data.root_pos_w[:, :2]
+    dist = torch.norm(env._goal_pos - robot_xy, dim=-1)
+    return (dist < env.cfg.waypoint_reach_threshold).float()
+
+
 def goal_reached(env: ManagerBasedEnv) -> torch.Tensor:
     """Binary 0/1 reward when the robot reaches the FINAL waypoint.
 

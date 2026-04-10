@@ -77,6 +77,7 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
         can_advance = (dist_to_wp < self.cfg.waypoint_reach_threshold) & (next_idx < n_wps)
         if not can_advance.any():
             return
+        self._logger.record_waypoint_advance(can_advance)
         self._waypoint_idx   = torch.where(can_advance, next_idx, self._waypoint_idx)
         new_goals            = self._paths[self._path_idx, self._waypoint_idx]
         self._goal_pos       = torch.where(can_advance.unsqueeze(-1), new_goals, self._goal_pos)
