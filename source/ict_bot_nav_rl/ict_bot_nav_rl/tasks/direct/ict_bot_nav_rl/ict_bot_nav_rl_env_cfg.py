@@ -28,7 +28,7 @@ from .observations import (
 from .rewards import (
     lidar_min_dist, velocity_toward_target, reward_forward_speed,
     reward_heading_alignment, penalize_backwards_movement,
-    goal_reached, collision, fell_off,
+    waypoint_reached, goal_reached, collision, fell_off,
 )
 
 _ICT_BOT_USD = "/home/user/Documents/ict_bot_nav_rl/urdf/ict_bot/ict_bot.usd"
@@ -208,11 +208,12 @@ class TerminationsCfg:
 
 @configclass
 class RewardsCfg:
-    progress     = RewTerm(func=velocity_toward_target,      weight=1.0)
-    speed_bonus  = RewTerm(func=reward_forward_speed,        weight=50.0)
-    heading      = RewTerm(func=reward_heading_alignment,    weight=2.0)
-    backward     = RewTerm(func=penalize_backwards_movement, weight=-5.0)
-    goal_reached = RewTerm(func=goal_reached,                weight=500.0)
+    progress          = RewTerm(func=velocity_toward_target,      weight=1.0)
+    speed_bonus       = RewTerm(func=reward_forward_speed,        weight=50.0)
+    heading           = RewTerm(func=reward_heading_alignment,    weight=2.0)
+    backward          = RewTerm(func=penalize_backwards_movement, weight=-5.0)
+    waypoint_reached  = RewTerm(func=waypoint_reached,            weight=100.0)
+    goal_reached      = RewTerm(func=goal_reached,                weight=500.0)
     collision    = RewTerm(func=collision,                   weight=50.0)
     fell_off     = RewTerm(func=fell_off,                    weight=200.0)
     action_rate  = RewTerm(func=mdp.action_rate_l2,         weight=-0.5)

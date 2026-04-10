@@ -26,6 +26,7 @@ class EpisodeLogger:
         self.ep_action_sum    = torch.zeros(n,                    device=device)
         self.ep_fwd_vel_sum   = torch.zeros(n,                    device=device)
         self.ep_ang_vel_sum   = torch.zeros(n,                    device=device)
+        self.ep_wps_reached   = torch.zeros(n, dtype=torch.long,  device=device)
 
         # iteration-window accumulators
         self.global_steps  = 0
@@ -35,9 +36,10 @@ class EpisodeLogger:
         self._iter_rew_sum = 0.0
         self._iter_rew_n   = 0
 
-        self._iter_ep_returns: list[float] = []
-        self._iter_ep_lengths: list[int]   = []
-        self._iter_ep_wp_pct:  list[float] = []
+        self._iter_ep_returns:  list[float] = []
+        self._iter_ep_lengths:  list[int]   = []
+        self._iter_ep_wp_pct:   list[float] = []
+        self._iter_ep_wps_hit:  list[int]   = []
 
         self._n_timeout   = 0
         self._n_collision = 0
@@ -107,6 +109,10 @@ class EpisodeLogger:
                             n_real_wps, path_idx, goal_reach_threshold)
         self._accumulate_extras(extras, done_ids.numel())
 
+    def record_waypoint_advance(self, can_advance: torch.Tensor) -> None:
+        """Increment per-episode waypoint counter for envs that just advanced."""
+        self.ep_wps_reached += can_advance.long()
+
     def should_log(self) -> bool:
         return self._iter_steps >= self.log_interval_steps
 
@@ -140,15 +146,18 @@ class EpisodeLogger:
             else:
                 status = "COLLISION"; self._n_collision += 1
 
+            wps_hit = int(self.ep_wps_reached[i].item())
             self._iter_ep_returns.append(self.episode_return[i].item())
             self._iter_ep_lengths.append(n_steps)
             self._iter_ep_wp_pct.append(wp_pct)
+            self._iter_ep_wps_hit.append(wps_hit)
 
             line = (
                 f"[Env {i.item():02d}] [{status}] "
                 f"steps={n_steps:4d} | "
                 f"return={self.episode_return[i].item():8.3f} | "
                 f"wp={extra_wp}/{max_poss} ({wp_pct:.0f}%) | "
+                f"wps_reached={wps_hit} | "
                 f"final_dist={goal_dist:.2f}m | "
                 f"traveled={self.ep_dist_traveled[i].item():.2f}m | "
                 f"avg_fwd={self.ep_fwd_vel_sum[i].item()/n_steps:+.3f}m/s | "
@@ -168,6 +177,7 @@ class EpisodeLogger:
         self.ep_max_waypoint[done_ids]  = 0
         self.ep_spawn_wp[done_ids]      = 0
         self.ep_dist_traveled[done_ids] = 0.0
+        self.ep_wps_reached[done_ids]   = 0
 
     def _accumulate_extras(self, extras: dict, n_done: int) -> None:
         for k, v in extras.get("log", {}).items():
@@ -187,7 +197,8 @@ class EpisodeLogger:
         n_ep     = len(self._iter_ep_returns)
         mean_ret = float(np.mean(self._iter_ep_returns)) if n_ep else float("nan")
         mean_len = float(np.mean(self._iter_ep_lengths)) if n_ep else float("nan")
-        mean_wp  = float(np.mean(self._iter_ep_wp_pct))  if n_ep else float("nan")
+        mean_wp      = float(np.mean(self._iter_ep_wp_pct))   if n_ep else float("nan")
+        mean_wps_hit = float(np.mean(self._iter_ep_wps_hit))  if n_ep else float("nan")
         total    = self._n_timeout + self._n_collision + self._n_success
         pct      = lambda x: 100.0 * x / max(total, 1)
 
@@ -206,6 +217,7 @@ class EpisodeLogger:
                 f"  Mean episode return: {mean_ret:+.3f}  ({n_ep} episodes)",
                 f"  Mean episode length: {mean_len:.1f} steps",
                 f"  Mean wp progress   : {mean_wp:.1f}%",
+                f"  Mean wps reached   : {mean_wps_hit:.1f}",
             ]
         else:
             lines.append("  (no episodes completed in this window)")
@@ -236,6 +248,7 @@ class EpisodeLogger:
         self._iter_ep_returns.clear()
         self._iter_ep_lengths.clear()
         self._iter_ep_wp_pct.clear()
+        self._iter_ep_wps_hit.clear()
         self._n_timeout   = 0
         self._n_collision = 0
         self._n_success   = 0
