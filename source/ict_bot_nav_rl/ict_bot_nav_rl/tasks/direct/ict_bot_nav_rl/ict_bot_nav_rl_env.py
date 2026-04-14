@@ -21,7 +21,7 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
         n_wps         = self._paths.shape[1]
         n             = self.num_envs
 
-        # All positions are in world frame (env_spacing=0, origins all zero)
+        # _paths: env-local frame. _goal_pos, _final_goal_pos: world frame.
         self._path_idx       = torch.zeros(n, dtype=torch.long, device=self.device)
         self._waypoint_idx   = torch.zeros(n, dtype=torch.long, device=self.device)
         self._goal_pos       = torch.zeros(n, 2, device=self.device)
@@ -42,15 +42,17 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
         self._logger.record_step_start(
             new_ep, robot_xy, self._path_idx, self._paths,
             self.cfg.waypoint_reach_threshold, self._wp_indices,
+            self.scene.env_origins[:, :2],
         )
 
         obs, rew, terminated, truncated, extras = super().step(action)
 
-        robot_xy = self.scene["robot"].data.root_pos_w[:, :2]
+        robot_xy    = self.scene["robot"].data.root_pos_w[:, :2]
+        env_origins = self.scene.env_origins[:, :2]
         self._logger.record_step(action, rew, robot_xy, self.scene["robot"].data, self.num_envs)
 
-        self._advance_waypoints(robot_xy)
-        self._update_max_waypoint(robot_xy)
+        self._advance_waypoints(robot_xy, env_origins)
+        self._update_max_waypoint(robot_xy, env_origins)
 
         done_ids = (terminated | truncated).nonzero(as_tuple=False).squeeze(-1)
         self._logger.record_done(
@@ -70,25 +72,27 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
 
         return obs, rew, terminated, truncated, extras
 
-    def _advance_waypoints(self, robot_xy: torch.Tensor) -> None:
-        dist_to_wp  = torch.norm(self._goal_pos - robot_xy, dim=-1)
+    def _advance_waypoints(self, robot_xy: torch.Tensor, env_origins: torch.Tensor) -> None:
+        dist_to_wp  = torch.norm(self._goal_pos - robot_xy, dim=-1)  # both world frame
         n_wps       = self._paths.shape[1]
         next_idx    = self._waypoint_idx + 1
         can_advance = (dist_to_wp < self.cfg.waypoint_reach_threshold) & (next_idx < n_wps)
         if not can_advance.any():
             return
         self._logger.record_waypoint_advance(can_advance)
-        self._waypoint_idx   = torch.where(can_advance, next_idx, self._waypoint_idx)
-        new_goals            = self._paths[self._path_idx, self._waypoint_idx]
-        self._goal_pos       = torch.where(can_advance.unsqueeze(-1), new_goals, self._goal_pos)
-        self._prev_goal_dist = torch.where(
+        self._waypoint_idx      = torch.where(can_advance, next_idx, self._waypoint_idx)
+        new_goals_local         = self._paths[self._path_idx, self._waypoint_idx]
+        new_goals_world         = new_goals_local + env_origins
+        self._goal_pos          = torch.where(can_advance.unsqueeze(-1), new_goals_world, self._goal_pos)
+        self._prev_goal_dist    = torch.where(
             can_advance,
-            torch.norm(new_goals - robot_xy, dim=-1),
+            torch.norm(new_goals_world - robot_xy, dim=-1),
             self._prev_goal_dist,
         )
 
-    def _update_max_waypoint(self, robot_xy: torch.Tensor) -> None:
-        wp_dists    = torch.norm(self._paths[self._path_idx] - robot_xy.unsqueeze(1), dim=-1)
+    def _update_max_waypoint(self, robot_xy: torch.Tensor, env_origins: torch.Tensor) -> None:
+        robot_local = robot_xy - env_origins                          # world → local
+        wp_dists    = torch.norm(self._paths[self._path_idx] - robot_local.unsqueeze(1), dim=-1)
         max_reached = ((wp_dists < self.cfg.waypoint_reach_threshold).long()
                        * self._wp_indices).max(dim=-1).values
         self._logger.ep_max_waypoint = torch.maximum(
