@@ -56,15 +56,17 @@ class EpisodeLogger:
         paths: torch.Tensor,
         wp_threshold: float,
         wp_indices: torch.Tensor,
+        env_origins_xy: torch.Tensor,
     ) -> None:
         if not new_ep.any():
             return
-        spawn_xy = robot_xy[new_ep]
+        spawn_xy = robot_xy[new_ep]                              # world frame (for travel logging)
         self.ep_start_pos[new_ep] = spawn_xy.clone()
         self.ep_prev_xy[new_ep]   = spawn_xy.clone()
 
+        spawn_xy_local = spawn_xy - env_origins_xy[new_ep]      # local frame (for WP comparison)
         spawn_wps = paths[path_idx[new_ep]]
-        spawn_d   = torch.norm(spawn_wps - spawn_xy.unsqueeze(1), dim=-1)
+        spawn_d   = torch.norm(spawn_wps - spawn_xy_local.unsqueeze(1), dim=-1)
         mask      = (spawn_d < wp_threshold).long()
         self.ep_spawn_wp[new_ep]     = (mask * wp_indices).max(dim=-1).values
         self.ep_max_waypoint[new_ep] = self.ep_spawn_wp[new_ep].clone()

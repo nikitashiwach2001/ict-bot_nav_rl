@@ -55,7 +55,8 @@ def lidar_min_dist(env: ManagerBasedEnv) -> torch.Tensor:
 # ── Private helper ────────────────────────────────────────────────────────────
 
 def _rel_goal_local(env: ManagerBasedEnv):
-    """Current waypoint sub-goal rotated into the robot's body frame.
+    """
+    Current waypoint sub-goal rotated into the robot's body frame.
 
     Returns
     -------
@@ -82,8 +83,8 @@ def _rel_goal_local(env: ManagerBasedEnv):
 # ── Dense navigation rewards ──────────────────────────────────────────────────
 
 def velocity_toward_target(env: ManagerBasedEnv) -> torch.Tensor:
-    """Velocity component toward the current waypoint, gated by forward speed.
-
+    """
+    Velocity component toward the current waypoint, gated by forward speed.
     Both the dot-product toward the goal AND forward motion must be positive
     to earn this reward.  This prevents the policy from backing into the goal
     or strafing sideways to collect it.
@@ -167,10 +168,23 @@ def fell_off(env: ManagerBasedEnv) -> torch.Tensor:
     return -(z < -0.5).float()
 
 
+def wall_proximity(env: ManagerBasedEnv) -> torch.Tensor:
+    """Continuous penalty that rises as the robot gets closer to any obstacle.
+
+    Returns a value in [0, 1]:
+      - 0.0 when min LiDAR dist >= proximity_threshold (safe zone)
+      - 1.0 when touching (dist = 0)
+    Weight in RewardsCfg must be NEGATIVE (e.g. -30.0).
+    """
+    min_dist = lidar_min_dist(env)
+    safe     = env.cfg.proximity_threshold
+    return torch.clamp(1.0 - min_dist / safe, min=0.0)
+
+
 def collision(env: ManagerBasedEnv) -> torch.Tensor:
     """Returns -1 when lidar_min < collision_threshold, else 0.
 
-    Weight in RewardsCfg should be POSITIVE (e.g. 50.0); the -1 carries
+    Weight in RewardsCfg should be POSITIVE (e.g. 100.0); the -1 carries
     the sign so the total contribution is negative.
     """
     return -(lidar_min_dist(env) < env.cfg.collision_threshold).float()

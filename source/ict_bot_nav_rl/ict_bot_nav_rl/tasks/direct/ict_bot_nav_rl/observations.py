@@ -33,8 +33,9 @@ def next_wp_obs(env: ManagerBasedEnv) -> torch.Tensor:
         return torch.zeros(env.num_envs, 2, device=env.device)
     n_wps = env._paths.shape[1]
     next_idx = torch.clamp(env._waypoint_idx + 1, max=n_wps - 1)
-    next_wp = env._paths[env._path_idx, next_idx]
-    return _world_to_body(env, next_wp)
+    next_wp_local = env._paths[env._path_idx, next_idx]
+    next_wp_world = next_wp_local + env.scene.env_origins[:, :2]
+    return _world_to_body(env, next_wp_world)
 
 
 def next_next_wp_obs(env: ManagerBasedEnv) -> torch.Tensor:
@@ -43,8 +44,9 @@ def next_next_wp_obs(env: ManagerBasedEnv) -> torch.Tensor:
         return torch.zeros(env.num_envs, 2, device=env.device)
     n_wps = env._paths.shape[1]
     next_idx = torch.clamp(env._waypoint_idx + 2, max=n_wps - 1)
-    next_wp = env._paths[env._path_idx, next_idx]
-    return _world_to_body(env, next_wp)
+    next_wp_local = env._paths[env._path_idx, next_idx]
+    next_wp_world = next_wp_local + env.scene.env_origins[:, :2]
+    return _world_to_body(env, next_wp_world)
 
 
 def heading_error_obs(env: ManagerBasedEnv) -> torch.Tensor:

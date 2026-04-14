@@ -37,6 +37,10 @@ parser.add_argument(
 )
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
+parser.add_argument("--waypoint_reach_threshold", type=float, default=None,
+                    help="Override waypoint reach threshold (m) for tighter path following during play.")
+parser.add_argument("--path_idx", type=int, default=None,
+                    help="Fix all envs to this path index (0-based). Default: random path each episode.")
 parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
@@ -134,6 +138,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     # override configurations with non-hydra CLI arguments
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    if args_cli.waypoint_reach_threshold is not None:
+        env_cfg.waypoint_reach_threshold = args_cli.waypoint_reach_threshold
+        print(f"[INFO] Waypoint reach threshold overridden to: {args_cli.waypoint_reach_threshold} m")
+    if args_cli.path_idx is not None:
+        env_cfg.fixed_path_idx = args_cli.path_idx
+        print(f"[INFO] Fixed path index: {args_cli.path_idx}")
 
     # configure the ML framework into the global skrl variable
     if args_cli.ml_framework.startswith("jax"):

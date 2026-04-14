@@ -3,13 +3,8 @@ from __future__ import annotations
 import math
 import os
 import torch
-import isaaclab.sim as sim_utils
 import isaaclab.envs.mdp as mdp
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ManagerBasedEnv
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.utils import configclass
 from isaaclab.managers import (
     ObservationGroupCfg as ObsGroup,
@@ -19,7 +14,9 @@ from isaaclab.managers import (
     TerminationTermCfg as DoneTerm,
     SceneEntityCfg,
 )
+import isaaclab.sim as sim_utils
 
+from .robot_cfg import IctBotNavSceneCfg
 from .actions import ActionsCfg
 from .observations import (
     lidar_ranges, rel_goal_obs, next_wp_obs,
@@ -28,76 +25,11 @@ from .observations import (
 from .rewards import (
     lidar_min_dist, velocity_toward_target, reward_forward_speed,
     reward_heading_alignment, penalize_backwards_movement,
-    waypoint_reached, goal_reached, collision, fell_off,
+    waypoint_reached, goal_reached, wall_proximity, collision, fell_off,
 )
 
-_ICT_BOT_USD = "/home/user/Documents/ict_bot_nav_rl/urdf/ict_bot/ict_bot.usd"
-_OFFICE_USD  = "/home/user/Documents/ict_bot_nav_rl/data/maps/office_env.usd"
-_PATHS_FILE  = os.path.join(os.path.dirname(__file__),
-                             "../../../../../../data/paths/single_path.npy")
-
-ICT_BOT_CFG = ArticulationCfg(
-    prim_path="{ENV_REGEX_NS}/ICTBot",
-    spawn=sim_utils.UsdFileCfg(
-        usd_path=_ICT_BOT_USD,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            rigid_body_enabled=True,
-            max_linear_velocity=0.5,
-            max_angular_velocity=6.25,
-            max_depenetration_velocity=10.0,
-            enable_gyroscopic_forces=True,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False,
-            solver_position_iteration_count=16,
-            solver_velocity_iteration_count=4,
-            sleep_threshold=0.005,
-            stabilization_threshold=0.001,
-        ),
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.1),
-        joint_pos={"left_wheel_joint": 0.0, "right_wheel_joint": 0.0},
-        joint_vel={"left_wheel_joint": 0.0, "right_wheel_joint": 0.0},
-    ),
-    actuators={
-        "wheels": ImplicitActuatorCfg(
-            joint_names_expr=["left_wheel_joint", "right_wheel_joint"],
-            effort_limit_sim=10.0,
-            velocity_limit_sim=6.0,
-            stiffness=0.0,
-            damping=5.0,
-        ),
-    },
-)
-
-LIDAR_CFG = RayCasterCfg(
-    prim_path="{ENV_REGEX_NS}/ICTBot/base_scan",
-    mesh_prim_paths=["/World/OfficeEnv/Walls"],
-    pattern_cfg=patterns.LidarPatternCfg(
-        channels=1,
-        vertical_fov_range=(0.0, 0.0),
-        horizontal_fov_range=(-180.0, 180.0),
-        horizontal_res=5.0,
-    ),
-    max_distance=10.0,
-    drift_range=(-0.005, 0.005),
-    debug_vis=False,
-)
-
-
-@configclass
-class IctBotNavSceneCfg(InteractiveSceneCfg):
-    dome_light = AssetBaseCfg(
-        prim_path="/World/Light",
-        spawn=sim_utils.DomeLightCfg(intensity=1500.0, color=(0.8, 0.8, 0.8)),
-    )
-    office_env = AssetBaseCfg(
-        prim_path="/World/OfficeEnv",
-        spawn=sim_utils.UsdFileCfg(usd_path=_OFFICE_USD),
-    )
-    robot: ArticulationCfg = ICT_BOT_CFG
-    lidar: RayCasterCfg    = LIDAR_CFG
+_PATHS_FILE = os.path.join(os.path.dirname(__file__),
+                            "../../../../../../data/paths/paths.npy")
 
 
 @configclass
@@ -121,8 +53,13 @@ class ObservationsCfg:
 
 def reset_robot_to_path_start(env: ManagerBasedEnv, env_ids: torch.Tensor) -> None:
     n         = len(env_ids)
-    path_ids  = torch.randint(0, env._n_paths, (n,), device=env.device)
+    fixed     = getattr(env.cfg, "fixed_path_idx", None)
+    if fixed is not None:
+        path_ids = torch.full((n,), fixed, dtype=torch.long, device=env.device)
+    else:
+        path_ids = torch.randint(0, env._n_paths, (n,), device=env.device)
     env._path_idx[env_ids] = path_ids
+
     final_idx = env._paths.shape[1] - 1
     starts    = env._paths[path_ids, 0, :]
 
@@ -137,18 +74,18 @@ def reset_robot_to_path_start(env: ManagerBasedEnv, env_ids: torch.Tensor) -> No
         torch.arange(2, device=env.device).unsqueeze(0),
     ].squeeze(1)
 
-    yaw_to_ref = torch.atan2(ref_wp[:, 1] - starts[:, 1], ref_wp[:, 0] - starts[:, 0])
-    spawn_yaw  = yaw_to_ref
+    yaw_to_ref     = torch.atan2(ref_wp[:, 1] - starts[:, 1], ref_wp[:, 0] - starts[:, 0])
+    env_origins_xy = env.scene.env_origins[env_ids, :2]
 
     robot      = env.scene["robot"]
     root_state = robot.data.default_root_state[env_ids].clone()
-    root_state[:, 0] = starts[:, 0]
-    root_state[:, 1] = starts[:, 1]
+    root_state[:, 0] = starts[:, 0] + env_origins_xy[:, 0]
+    root_state[:, 1] = starts[:, 1] + env_origins_xy[:, 1]
     root_state[:, 2] = 0.1
-    root_state[:, 3] = torch.cos(spawn_yaw / 2.0)
+    root_state[:, 3] = torch.cos(yaw_to_ref / 2.0)
     root_state[:, 4] = 0.0
     root_state[:, 5] = 0.0
-    root_state[:, 6] = torch.sin(spawn_yaw / 2.0)
+    root_state[:, 6] = torch.sin(yaw_to_ref / 2.0)
     root_state[:, 7:] = 0.0
     robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
     robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
@@ -157,16 +94,18 @@ def reset_robot_to_path_start(env: ManagerBasedEnv, env_ids: torch.Tensor) -> No
         i = 0
         print(f"[SPAWN] env {env_ids[i].item():02d} | "
               f"start=({starts[i,0].item():.2f}, {starts[i,1].item():.2f}) | "
-              f"spawn_yaw={math.degrees(spawn_yaw[i].item()):+.1f}°")
+              f"yaw={math.degrees(yaw_to_ref[i].item()):+.1f}°")
 
     env._waypoint_idx[env_ids] = 1
-    env._goal_pos[env_ids]     = env._paths[path_ids, 1, :]
+    env._goal_pos[env_ids]     = env._paths[path_ids, 1, :] + env_origins_xy
 
     if hasattr(env, "_final_goal_pos"):
-        env._final_goal_pos[env_ids] = env._paths[path_ids, final_idx, :]
+        env._final_goal_pos[env_ids] = env._paths[path_ids, final_idx, :] + env_origins_xy
 
     if hasattr(env, "_prev_goal_dist"):
-        env._prev_goal_dist[env_ids] = torch.norm(env._goal_pos[env_ids] - starts, dim=-1)
+        env._prev_goal_dist[env_ids] = torch.norm(
+            env._goal_pos[env_ids] - (starts + env_origins_xy), dim=-1
+        )
 
 
 @configclass
@@ -208,33 +147,36 @@ class TerminationsCfg:
 
 @configclass
 class RewardsCfg:
-    progress          = RewTerm(func=velocity_toward_target,      weight=1.0)
-    speed_bonus       = RewTerm(func=reward_forward_speed,        weight=50.0)
-    heading           = RewTerm(func=reward_heading_alignment,    weight=2.0)
-    backward          = RewTerm(func=penalize_backwards_movement, weight=-5.0)
-    waypoint_reached  = RewTerm(func=waypoint_reached,            weight=100.0)
-    goal_reached      = RewTerm(func=goal_reached,                weight=500.0)
-    collision    = RewTerm(func=collision,                   weight=50.0)
-    fell_off     = RewTerm(func=fell_off,                    weight=200.0)
-    action_rate  = RewTerm(func=mdp.action_rate_l2,         weight=-0.5)
-    alive        = RewTerm(func=mdp.is_alive,               weight=-1.0)
+    progress         = RewTerm(func=velocity_toward_target,      weight=1.0)
+    speed_bonus      = RewTerm(func=reward_forward_speed,        weight=25.0)
+    heading          = RewTerm(func=reward_heading_alignment,    weight=2.0)
+    backward         = RewTerm(func=penalize_backwards_movement, weight=-20.0)
+    waypoint_reached = RewTerm(func=waypoint_reached,            weight=100.0)
+    goal_reached     = RewTerm(func=goal_reached,                weight=500.0)
+    wall_proximity   = RewTerm(func=wall_proximity,              weight=-60.0)
+    collision        = RewTerm(func=collision,                   weight=100.0)
+    fell_off         = RewTerm(func=fell_off,                    weight=200.0)
+    action_rate      = RewTerm(func=mdp.action_rate_l2,         weight=-0.5)
+    alive            = RewTerm(func=mdp.is_alive,               weight=-1.0)
 
 
 @configclass
 class IctBotNavRlEnvCfg(ManagerBasedRLEnvCfg):
-    scene:        IctBotNavSceneCfg = IctBotNavSceneCfg(num_envs=4, env_spacing=0.0)
+    scene:        IctBotNavSceneCfg = IctBotNavSceneCfg(num_envs=4, env_spacing=15.0)
     observations: ObservationsCfg  = ObservationsCfg()
     actions:      ActionsCfg       = ActionsCfg()
     events:       EventCfg         = EventCfg()
     rewards:      RewardsCfg       = RewardsCfg()
     terminations: TerminationsCfg  = TerminationsCfg()
 
-    paths_file:               str   = _PATHS_FILE
-    max_waypoints:            int   = 100
-    waypoint_reach_threshold: float = 0.4
-    goal_reach_threshold:     float = 0.5
-    collision_threshold:      float = 0.15
-    log_interval_steps:       int   = 256
+    paths_file:               str        = _PATHS_FILE
+    fixed_path_idx:           int | None = None
+    max_waypoints:            int        = 100
+    waypoint_reach_threshold: float      = 0.4
+    goal_reach_threshold:     float      = 0.5
+    collision_threshold:      float      = 0.20
+    proximity_threshold:      float      = 0.5
+    log_interval_steps:       int        = 256
 
     def __post_init__(self):
         self.decimation          = 5
