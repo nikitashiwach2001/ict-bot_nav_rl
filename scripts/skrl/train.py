@@ -86,9 +86,9 @@ from packaging import version
 
 # check for minimum supported skrl version
 SKRL_VERSION = "1.4.3"
-if version.parse(skrl.__version__) < version.parse(SKRL_VERSION):
-    skrl.logger.error(
-        f"Unsupported skrl version: {skrl.__version__}. "
+if version.parse(skrl.__version__) < version.parse(SKRL_VERSION): # type: ignore
+    skrl.logger.error( # type: ignore
+        f"Unsupported skrl version: {skrl.__version__}. " # type: ignore
         f"Install supported version using 'pip install skrl>={SKRL_VERSION}'"
     )
     exit()
@@ -151,7 +151,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg["trainer"]["close_environment_at_exit"] = False
     # configure the ML framework into the global skrl variable
     if args_cli.ml_framework.startswith("jax"):
-        skrl.config.jax.backend = "jax" if args_cli.ml_framework == "jax" else "numpy"
+        skrl.config.jax.backend = "jax" if args_cli.ml_framework == "jax" else "numpy" # type: ignore
 
     # randomly sample a seed if seed = -1
     if args_cli.seed == -1:
@@ -249,6 +249,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
 if __name__ == "__main__":
     # run the main function
-    main()
+    main() # type: ignore
     # close sim app
     simulation_app.close()
