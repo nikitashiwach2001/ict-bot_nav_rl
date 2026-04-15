@@ -57,7 +57,7 @@ def get_path(idx):
 if args.mode == "overview":
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.imshow(img, cmap="gray", origin="upper")
-    colors = plt.cm.rainbow(np.linspace(0, 1, len(paths)))
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(paths))) # type: ignore
     for i in range(len(paths)):
         p = get_path(i)
         c, r = world_to_px(p)

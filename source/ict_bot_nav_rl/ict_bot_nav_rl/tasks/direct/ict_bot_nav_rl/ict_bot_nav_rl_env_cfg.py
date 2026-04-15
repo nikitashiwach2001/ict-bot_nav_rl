@@ -23,9 +23,14 @@ from .observations import (
     next_next_wp_obs, heading_error_obs, wheel_velocities_obs,
 )
 from .rewards import (
-    lidar_min_dist, velocity_toward_target, reward_forward_speed,
+    lidar_min_dist,
+    velocity_toward_target, reward_forward_speed,
     reward_heading_alignment, penalize_backwards_movement,
-    waypoint_reached, goal_reached, wall_proximity, collision, fell_off,
+    progress_delta, forward_clearance,
+    waypoint_reached, goal_reached,
+    wall_proximity, obstacle_avoidance,
+    spinning_penalty, lateral_clearance_reward,
+    fell_off,
 )
 
 _PATHS_FILE = os.path.join(os.path.dirname(__file__),
@@ -141,23 +146,27 @@ def fell_off_termination(env: ManagerBasedEnv) -> torch.Tensor:
 class TerminationsCfg:
     time_out     = DoneTerm(func=mdp.time_out,             time_out=True)
     goal_reached = DoneTerm(func=goal_reached_termination, time_out=False)
-    collision    = DoneTerm(func=collision_termination,    time_out=False)
+    # collision    = DoneTerm(func=collision_termination,    time_out=False)
     fell_off     = DoneTerm(func=fell_off_termination,     time_out=False)
 
 
 @configclass
 class RewardsCfg:
-    progress         = RewTerm(func=velocity_toward_target,      weight=1.0)
-    speed_bonus      = RewTerm(func=reward_forward_speed,        weight=25.0)
-    heading          = RewTerm(func=reward_heading_alignment,    weight=2.0)
-    backward         = RewTerm(func=penalize_backwards_movement, weight=-20.0)
-    waypoint_reached = RewTerm(func=waypoint_reached,            weight=100.0)
-    goal_reached     = RewTerm(func=goal_reached,                weight=500.0)
-    wall_proximity   = RewTerm(func=wall_proximity,              weight=-60.0)
-    collision        = RewTerm(func=collision,                   weight=100.0)
-    fell_off         = RewTerm(func=fell_off,                    weight=200.0)
-    action_rate      = RewTerm(func=mdp.action_rate_l2,         weight=-0.5)
-    alive            = RewTerm(func=mdp.is_alive,               weight=-1.0)
+    progress           = RewTerm(func=velocity_toward_target,      weight=3.0)
+    progress_delta     = RewTerm(func=progress_delta,              weight=5.0)
+    speed_bonus        = RewTerm(func=reward_forward_speed,        weight=3.0)
+    heading            = RewTerm(func=reward_heading_alignment,    weight=4.0)
+    forward_clearance  = RewTerm(func=forward_clearance,           weight=2.0)
+    waypoint_reached   = RewTerm(func=waypoint_reached,            weight=20.0)
+    goal_reached       = RewTerm(func=goal_reached,                weight=100.0)
+    obstacle_avoidance = RewTerm(func=obstacle_avoidance,          weight=-1.5)
+    wall_proximity     = RewTerm(func=wall_proximity,              weight=-3.0)
+    spinning_penalty   = RewTerm(func=spinning_penalty,            weight=-5.0)
+    lateral_clearance  = RewTerm(func=lateral_clearance_reward,    weight=6.0)
+    fell_off           = RewTerm(func=fell_off,                    weight=50.0)
+    backward           = RewTerm(func=penalize_backwards_movement, weight=-3.0)
+    action_rate        = RewTerm(func=mdp.action_rate_l2,          weight=-2.0)
+    alive              = RewTerm(func=mdp.is_alive,                weight=-0.05)
 
 
 @configclass

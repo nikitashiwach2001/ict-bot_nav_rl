@@ -98,7 +98,7 @@ class EpisodeLogger:
         self,
         done_ids: torch.Tensor,
         terminated: torch.Tensor,
-        robot_data,
+        pre_step_xy: torch.Tensor,
         final_goal_pos: torch.Tensor,
         n_real_wps: torch.Tensor,
         path_idx: torch.Tensor,
@@ -107,7 +107,7 @@ class EpisodeLogger:
     ) -> None:
         if done_ids.numel() == 0:
             return
-        self._collect_stats(done_ids, terminated, robot_data, final_goal_pos,
+        self._collect_stats(done_ids, terminated, pre_step_xy, final_goal_pos,
                             n_real_wps, path_idx, goal_reach_threshold)
         self._accumulate_extras(extras, done_ids.numel())
 
@@ -125,15 +125,13 @@ class EpisodeLogger:
 
     # ── private ────────────────────────────────────────────────────────────────
 
-    def _collect_stats(self, done_ids, terminated, robot_data, final_goal_pos,
+    def _collect_stats(self, done_ids, terminated, pre_step_xy, final_goal_pos,
                        n_real_wps, path_idx, goal_reach_threshold):
-        root_pos   = robot_data.root_pos_w[:, :2]
-        lidar      = None  # resolved lazily if needed
         file_lines = []
 
         for i in done_ids:
             n_steps   = max(int(self.episode_steps[i]), 1)
-            goal_dist = torch.norm(final_goal_pos[i] - root_pos[i]).item()
+            goal_dist = torch.norm(final_goal_pos[i] - pre_step_xy[i]).item()
             n_real    = int(n_real_wps[int(path_idx[i])].item())
             spawn_wp  = int(self.ep_spawn_wp[i])
             extra_wp  = max(0, min(int(self.ep_max_waypoint[i]), n_real - 1) - spawn_wp)

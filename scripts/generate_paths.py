@@ -40,7 +40,7 @@ free_mask  = img >= 250
 radius_px  = int(np.ceil(args.robot_radius / res))
 wall_mask  = ~free_mask
 inflated   = binary_dilation(wall_mask, iterations=radius_px)
-safe_mask  = ~inflated
+safe_mask  = ~inflated # type: ignore
 free_pixels = np.argwhere(safe_mask)
 print(f"Safe free pixels after inflation: {len(free_pixels)}")
 
@@ -79,7 +79,7 @@ def astar(grid, start, goal):
                 ng   = g_cost[cur] + step
                 nb   = (nr, nc)
                 if nb not in g_cost or ng < g_cost[nb]:
-                    g_cost[nb]    = ng
+                    g_cost[nb]    = ng # type: ignore
                     came_from[nb] = cur
                     heapq.heappush(open_q, (ng + heuristic(nb, goal), nb))
     return None

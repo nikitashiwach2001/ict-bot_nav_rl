@@ -45,18 +45,20 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
             self.scene.env_origins[:, :2],
         )
 
+        pre_step_xy = self.scene["robot"].data.root_pos_w[:, :2].clone()
+
         obs, rew, terminated, truncated, extras = super().step(action)
 
-        robot_xy    = self.scene["robot"].data.root_pos_w[:, :2]
-        env_origins = self.scene.env_origins[:, :2]
+        robot_xy = self.scene["robot"].data.root_pos_w[:, :2]
         self._logger.record_step(action, rew, robot_xy, self.scene["robot"].data, self.num_envs)
 
+        env_origins = self.scene.env_origins[:, :2]
         self._advance_waypoints(robot_xy, env_origins)
         self._update_max_waypoint(robot_xy, env_origins)
 
         done_ids = (terminated | truncated).nonzero(as_tuple=False).squeeze(-1)
         self._logger.record_done(
-            done_ids, terminated, self.scene["robot"].data,
+            done_ids, terminated, pre_step_xy,
             self._final_goal_pos, self._n_real_wps, self._path_idx,
             self.cfg.goal_reach_threshold, extras,
         )
@@ -73,7 +75,7 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
         return obs, rew, terminated, truncated, extras
 
     def _advance_waypoints(self, robot_xy: torch.Tensor, env_origins: torch.Tensor) -> None:
-        dist_to_wp  = torch.norm(self._goal_pos - robot_xy, dim=-1)  # both world frame
+        dist_to_wp  = torch.norm(self._goal_pos - robot_xy, dim=-1)
         n_wps       = self._paths.shape[1]
         next_idx    = self._waypoint_idx + 1
         can_advance = (dist_to_wp < self.cfg.waypoint_reach_threshold) & (next_idx < n_wps)
@@ -91,7 +93,7 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
         )
 
     def _update_max_waypoint(self, robot_xy: torch.Tensor, env_origins: torch.Tensor) -> None:
-        robot_local = robot_xy - env_origins                          # world → local
+        robot_local = robot_xy - env_origins
         wp_dists    = torch.norm(self._paths[self._path_idx] - robot_local.unsqueeze(1), dim=-1)
         max_reached = ((wp_dists < self.cfg.waypoint_reach_threshold).long()
                        * self._wp_indices).max(dim=-1).values
