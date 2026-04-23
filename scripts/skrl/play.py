@@ -67,12 +67,24 @@ AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
 # always enable cameras to record video
-if args_cli.video:
-    args_cli.enable_cameras = True
+# if args_cli.video:
+#     args_cli.enable_cameras = True
+
+
+# 🔥 FORCE SAFE DEBUG SETTINGS
+if args_cli.num_envs is None:
+    args_cli.num_envs = 1   # viewport friendly
+
+args_cli.video = False      # disable video (huge overhead)
+args_cli.real_time = False  # avoid sync lag
 
 # clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
 # launch omniverse app
+# 🔥 Reduce rendering load
+args_cli.renderer = "RayTracedLighting"   # lighter than full RTX
+args_cli.headless = False                 # keep viewport but lighter
+
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
@@ -136,7 +148,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     train_task_name = task_name.replace("-Play", "")
 
     # override configurations with non-hydra CLI arguments
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    # env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    env_cfg.scene.num_envs = 1 
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
     if args_cli.waypoint_reach_threshold is not None:
         env_cfg.waypoint_reach_threshold = args_cli.waypoint_reach_threshold
@@ -180,7 +193,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, expe
     env_cfg.log_dir = log_dir
 
     # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array")
+    print("step running")
+
+
+    try:
+        env.unwrapped.sim.set_setting("/app/runLoops/main/rateLimitEnabled", True)
+        env.unwrapped.sim.set_setting("/app/runLoops/main/rateLimitFrequency", 30)
+    except Exception as e:
+        print(f"[WARNING] Could not set FPS limit: {e}")
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv) and algorithm in ["ppo"]:

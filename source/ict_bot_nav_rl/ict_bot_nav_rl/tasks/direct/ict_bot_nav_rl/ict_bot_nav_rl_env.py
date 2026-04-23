@@ -32,7 +32,7 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
         diffs = torch.norm(self._paths[:, 1:] - self._paths[:, :-1], dim=-1)
         self._n_real_wps = (diffs > 1e-4).sum(dim=-1) + 1
 
-        self._logger = EpisodeLogger(n, self.device, cfg.log_interval_steps)
+        self._logger     = EpisodeLogger(n, self.device, cfg.log_interval_steps)
         self._visualizer = PathVisualizer(self.device) if self.sim.has_gui() else None
 
     def step(self, action):
@@ -49,10 +49,10 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
 
         obs, rew, terminated, truncated, extras = super().step(action)
 
-        robot_xy = self.scene["robot"].data.root_pos_w[:, :2]
+        robot_xy    = self.scene["robot"].data.root_pos_w[:, :2]
+        env_origins = self.scene.env_origins[:, :2]
         self._logger.record_step(action, rew, robot_xy, self.scene["robot"].data, self.num_envs)
 
-        env_origins = self.scene.env_origins[:, :2]
         self._advance_waypoints(robot_xy, env_origins)
         self._update_max_waypoint(robot_xy, env_origins)
 
@@ -74,6 +74,8 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
 
         return obs, rew, terminated, truncated, extras
 
+    # ── Waypoint management ────────────────────────────────────────────────────
+
     def _advance_waypoints(self, robot_xy: torch.Tensor, env_origins: torch.Tensor) -> None:
         dist_to_wp  = torch.norm(self._goal_pos - robot_xy, dim=-1)
         n_wps       = self._paths.shape[1]
@@ -82,11 +84,11 @@ class IctBotNavRlEnv(ManagerBasedRLEnv):
         if not can_advance.any():
             return
         self._logger.record_waypoint_advance(can_advance)
-        self._waypoint_idx      = torch.where(can_advance, next_idx, self._waypoint_idx)
-        new_goals_local         = self._paths[self._path_idx, self._waypoint_idx]
-        new_goals_world         = new_goals_local + env_origins
-        self._goal_pos          = torch.where(can_advance.unsqueeze(-1), new_goals_world, self._goal_pos)
-        self._prev_goal_dist    = torch.where(
+        self._waypoint_idx   = torch.where(can_advance, next_idx, self._waypoint_idx)
+        new_goals_local      = self._paths[self._path_idx, self._waypoint_idx]
+        new_goals_world      = new_goals_local + env_origins
+        self._goal_pos       = torch.where(can_advance.unsqueeze(-1), new_goals_world, self._goal_pos)
+        self._prev_goal_dist = torch.where(
             can_advance,
             torch.norm(new_goals_world - robot_xy, dim=-1),
             self._prev_goal_dist,

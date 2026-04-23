@@ -10,10 +10,11 @@ _W = 62  # console width
 
 
 class EpisodeLogger:
-    def __init__(self, num_envs: int, device: str, log_interval_steps: int):
+    def __init__(self, num_envs: int, device: str, log_interval_steps: int, show_wp_stats: bool = True):
         n = num_envs
+        self.num_envs = n
         self.device = device
-        self.log_interval_steps = log_interval_steps
+        self.log_interval_steps = log_interval_steps  # in policy steps (per-env)
 
         # per-episode buffers (also read by env for navigation logic)
         self.episode_steps    = torch.zeros(n, dtype=torch.long,  device=device)
@@ -47,6 +48,11 @@ class EpisodeLogger:
 
         self._log_sum: dict[str, float] = {}
         self._log_n:   dict[str, int]   = {}
+        self.show_wp_stats = show_wp_stats
+
+        # cumulative counters (never reset — for overall success rate)
+        self._total_episodes = 0
+        self._total_success  = 0
 
     def record_step_start(
         self,
@@ -116,7 +122,8 @@ class EpisodeLogger:
         self.ep_wps_reached += can_advance.long()
 
     def should_log(self) -> bool:
-        return self._iter_steps >= self.log_interval_steps
+        # log_interval_steps is in policy steps; _iter_steps is total env steps
+        return self._iter_steps >= self.log_interval_steps * self.num_envs
 
     def print_and_reset(self) -> None:
         self._iter_num += 1
@@ -132,21 +139,29 @@ class EpisodeLogger:
         for i in done_ids:
             n_steps   = max(int(self.episode_steps[i]), 1)
             goal_dist = torch.norm(final_goal_pos[i] - pre_step_xy[i]).item()
-            n_real    = int(n_real_wps[int(path_idx[i])].item())
-            spawn_wp  = int(self.ep_spawn_wp[i])
-            extra_wp  = max(0, min(int(self.ep_max_waypoint[i]), n_real - 1) - spawn_wp)
-            max_poss  = max(0, n_real - 1 - spawn_wp)
-            wp_pct    = (extra_wp / max_poss * 100.0) if max_poss > 0 else 0.0
 
-            is_success = terminated[i].item() and goal_dist < goal_reach_threshold
+            is_success = terminated[i].item() and goal_dist < goal_reach_threshold + 0.15
             if not terminated[i].item():
                 status = "timeout";   self._n_timeout   += 1
             elif is_success:
-                status = "SUCCESS";   self._n_success   += 1
+                status = "SUCCESS";   self._n_success   += 1;  self._total_success += 1
             else:
                 status = "COLLISION"; self._n_collision += 1
+            self._total_episodes += 1
 
-            wps_hit = int(self.ep_wps_reached[i].item())
+            if self.show_wp_stats:
+                n_real   = int(n_real_wps[int(path_idx[i])].item())
+                spawn_wp = int(self.ep_spawn_wp[i])
+                extra_wp = max(0, min(int(self.ep_max_waypoint[i]), n_real - 1) - spawn_wp)
+                max_poss = max(0, n_real - 1 - spawn_wp)
+                wp_pct   = (extra_wp / max_poss * 100.0) if max_poss > 0 else 0.0
+                wps_hit  = int(self.ep_wps_reached[i].item())
+                wp_str   = f"wp={extra_wp}/{max_poss} ({wp_pct:.0f}%) | wps_reached={wps_hit} | "
+            else:
+                wp_pct   = 0.0
+                wps_hit  = 0
+                wp_str   = ""
+
             self._iter_ep_returns.append(self.episode_return[i].item())
             self._iter_ep_lengths.append(n_steps)
             self._iter_ep_wp_pct.append(wp_pct)
@@ -156,15 +171,14 @@ class EpisodeLogger:
                 f"[Env {i.item():02d}] [{status}] "
                 f"steps={n_steps:4d} | "
                 f"return={self.episode_return[i].item():8.3f} | "
-                f"wp={extra_wp}/{max_poss} ({wp_pct:.0f}%) | "
-                f"wps_reached={wps_hit} | "
+                + wp_str +
                 f"final_dist={goal_dist:.2f}m | "
                 f"traveled={self.ep_dist_traveled[i].item():.2f}m | "
                 f"avg_fwd={self.ep_fwd_vel_sum[i].item()/n_steps:+.3f}m/s | "
                 f"avg_ang={self.ep_ang_vel_sum[i].item()/n_steps:+.3f}rad/s"
             )
             file_lines.append(line)
-            print(line, flush=True)
+            # per-episode print disabled — see episode_log.txt for details
 
         with open(_LOG_PATH, "a") as f:
             f.write("\n".join(file_lines) + "\n")
@@ -201,13 +215,19 @@ class EpisodeLogger:
         mean_wps_hit = float(np.mean(self._iter_ep_wps_hit))  if n_ep else float("nan")
         total    = self._n_timeout + self._n_collision + self._n_success
         pct      = lambda x: 100.0 * x / max(total, 1)
+        policy_steps = self.global_steps // self.num_envs
+        cum_sr   = 100.0 * self._total_success / max(self._total_episodes, 1)
+        # flag random exploration phase (TD3 fills buffer before learning)
+        explore_tag = "  [RANDOM EXPLORATION — buffer filling]" if policy_steps < 10000 else ""
 
         sep  = "─" * _W
         tsep = "━" * _W
         lines = [
             "", tsep,
-            f"  Iteration {self._iter_num}  |  Total steps: {self.global_steps:,}",
-            f"  Speed: {speed:,.0f} steps/s  |  Window: {self._iter_steps:,} steps ({elapsed:.1f}s)",
+            f"  Iteration {self._iter_num}  |  Policy steps: {policy_steps:,}  |  Total env steps: {self.global_steps:,}{explore_tag}",
+            f"  Speed: {speed:,.0f} steps/s  |  Window: {self._iter_steps // self.num_envs:,} policy steps ({elapsed:.1f}s)",
+            sep,
+            f"  SUCCESS RATE (cumulative): {cum_sr:.1f}%  ({self._total_success}/{self._total_episodes} episodes)",
             sep,
             f"  Mean step reward   : {mean_rew:+.4f}",
         ]
@@ -216,9 +236,12 @@ class EpisodeLogger:
             lines += [
                 f"  Mean episode return: {mean_ret:+.3f}  ({n_ep} episodes)",
                 f"  Mean episode length: {mean_len:.1f} steps",
-                f"  Mean wp progress   : {mean_wp:.1f}%",
-                f"  Mean wps reached   : {mean_wps_hit:.1f}",
             ]
+            if self.show_wp_stats:
+                lines += [
+                    f"  Mean wp progress   : {mean_wp:.1f}%",
+                    f"  Mean wps reached   : {mean_wps_hit:.1f}",
+                ]
         else:
             lines.append("  (no episodes completed in this window)")
 

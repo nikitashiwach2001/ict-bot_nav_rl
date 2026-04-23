@@ -62,7 +62,7 @@ def reset_robot_to_path_start(env: ManagerBasedEnv, env_ids: torch.Tensor) -> No
     if fixed is not None:
         path_ids = torch.full((n,), fixed, dtype=torch.long, device=env.device)
     else:
-        path_ids = torch.randint(0, env._n_paths, (n,), device=env.device)
+        path_ids = torch.randint(1, env._n_paths, (n,), device=env.device)
     env._path_idx[env_ids] = path_ids
 
     final_idx = env._paths.shape[1] - 1
@@ -159,13 +159,13 @@ class RewardsCfg:
     forward_clearance  = RewTerm(func=forward_clearance,           weight=2.0)
     waypoint_reached   = RewTerm(func=waypoint_reached,            weight=20.0)
     goal_reached       = RewTerm(func=goal_reached,                weight=100.0)
-    obstacle_avoidance = RewTerm(func=obstacle_avoidance,          weight=-1.5)
-    wall_proximity     = RewTerm(func=wall_proximity,              weight=-3.0)
+    obstacle_avoidance = RewTerm(func=obstacle_avoidance,          weight=-6.0)   # was -1.5
+    wall_proximity     = RewTerm(func=wall_proximity,              weight=-8.0)   # was -3.0
     spinning_penalty   = RewTerm(func=spinning_penalty,            weight=-5.0)
-    lateral_clearance  = RewTerm(func=lateral_clearance_reward,    weight=6.0)
+    lateral_clearance  = RewTerm(func=lateral_clearance_reward,    weight=12.0)  # was 6.0
     fell_off           = RewTerm(func=fell_off,                    weight=50.0)
     backward           = RewTerm(func=penalize_backwards_movement, weight=-3.0)
-    action_rate        = RewTerm(func=mdp.action_rate_l2,          weight=-2.0)
+    action_rate        = RewTerm(func=mdp.action_rate_l2,          weight=-0.1)   # was -0.5 — allow fast obstacle-avoidance turns
     alive              = RewTerm(func=mdp.is_alive,                weight=-0.05)
 
 
@@ -189,7 +189,7 @@ class IctBotNavRlEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         self.decimation          = 5
-        self.episode_length_s    = 25.0
+        self.episode_length_s    = 40.0  # was 25.0 — longer paths need more time
         self.sim.dt              = 1.0 / 100.0
         self.sim.render_interval = self.decimation
         self.sim.physics_material = sim_utils.RigidBodyMaterialCfg(

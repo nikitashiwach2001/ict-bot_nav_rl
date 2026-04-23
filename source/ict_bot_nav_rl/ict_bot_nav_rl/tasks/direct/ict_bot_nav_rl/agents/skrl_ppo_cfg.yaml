@@ -66,7 +66,7 @@ agent:
   value_preprocessor_kwargs: null
   experiment:
     directory: ict_bot_nav
-    experiment_name: ppo_v2
+    experiment_name: ppo_v3_finetune  # was ppo_v2 — separate dir keeps original checkpoints safe
     write_interval: 500
     checkpoint_interval: 5000
 

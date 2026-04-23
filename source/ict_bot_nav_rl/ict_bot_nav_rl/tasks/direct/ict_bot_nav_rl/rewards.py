@@ -161,8 +161,6 @@ def goal_reached(env: ManagerBasedEnv) -> torch.Tensor:
 
 def fell_off(env: ManagerBasedEnv) -> torch.Tensor:
     """Returns -1 when the robot's Z drops below -0.5 m (fallen through/off).
-
-    Weight in RewardsCfg should be POSITIVE (e.g. 200.0); the -1 carries the sign.
     """
     z = env.scene["robot"].data.root_pos_w[:, 2]
     return -(z < -0.5).float()
@@ -339,4 +337,130 @@ def lateral_clearance_reward(env: ManagerBasedEnv) -> torch.Tensor:
     )
  
     return torch.clamp(turning_toward_open, min=0.0) * near_obstacle
- 
+
+
+def penalize_away_from_goal(env: ManagerBasedEnv) -> torch.Tensor:
+    """
+    Penalise velocity component pointing away from the goal.
+
+    Fires when the robot's velocity has a negative component toward the goal
+    (i.e. it is actively moving away). Zero during pure turns (no linear vel).
+    Weight in RewardsCfg must be NEGATIVE (e.g. -3.0).
+    """
+    local_2d, dist = _rel_goal_local(env)
+    target_dir     = local_2d / (dist.unsqueeze(-1) + 1e-6)
+
+    robot     = env.scene["robot"]
+    local_vel = quat_apply(quat_inv(robot.data.root_quat_w),
+                           robot.data.root_lin_vel_w)
+    vel_toward = (local_vel[:, :2] * target_dir).sum(dim=-1)
+    return torch.clamp(-vel_toward, min=0.0)   # positive when moving away
+
+
+def time_efficiency_bonus(env: ManagerBasedEnv) -> torch.Tensor:
+    """
+    One-shot bonus when the goal is reached, scaled by remaining episode time.
+
+    Returns a value in [0, 1]:
+      - ~1.0 if goal reached very early in the episode
+      - ~0.0 if goal reached just before timeout
+    Fires on the same step as goal_reached, so the agent sees both bonuses
+    before the episode resets.
+    Weight in RewardsCfg should be POSITIVE (e.g. 1500.0).
+    """
+    if not hasattr(env, "_final_goal_pos"):
+        return torch.zeros(env.num_envs, device=env.device)
+    robot_xy = env.scene["robot"].data.root_pos_w[:, :2]
+    dist     = torch.norm(env._final_goal_pos - robot_xy, dim=-1)
+    reached  = (dist < env.cfg.goal_reach_threshold).float()
+
+    max_steps     = int(env.cfg.episode_length_s / (env.cfg.sim.dt * env.cfg.decimation))
+    time_remaining = torch.clamp(
+        1.0 - env.episode_length_buf.float() / max_steps, min=0.0
+    )
+    return reached * time_remaining
+
+
+# ── Stage 2 reward function ───────────────────────────────────────────────────
+
+def r_col(env: ManagerBasedEnv) -> torch.Tensor:
+    """Binary -1 when any moving obstacle centre is within collision_threshold of robot.
+
+    Uses analytical distance (not LiDAR) because kinematic sphere obstacles are not
+    added as LiDAR raycast targets.  Weight must be NEGATIVE (e.g. -200.0).
+    """
+    if not hasattr(env, "_obstacle_pos_all"):
+        return torch.zeros(env.num_envs, device=env.device)
+    robot_xy = env.scene["robot"].data.root_pos_w[:, :2]
+    dists = torch.norm(env._obstacle_pos_all - robot_xy.unsqueeze(1), dim=-1)
+    return -(dists.min(dim=-1).values < env.cfg.collision_threshold).float()
+
+
+# ── Stage 1 reward functions ──────────────────────────────────────────────────
+
+def r_dtg(env: ManagerBasedEnv) -> torch.Tensor:
+    """Binary +1 if distance to goal decreased this step (R_dtg).
+
+    Uses _goal_pos (current waypoint / goal) and _prev_goal_dist.
+    Updates _prev_goal_dist in-place so progress_delta must NOT also be active.
+    """
+    if not hasattr(env, "_goal_pos") or not hasattr(env, "_prev_goal_dist"):
+        return torch.zeros(env.num_envs, device=env.device)
+    robot_xy  = env.scene["robot"].data.root_pos_w[:, :2]
+    curr_dist = torch.norm(env._goal_pos - robot_xy, dim=-1)
+    improved  = (env._prev_goal_dist - curr_dist) > 0.0
+    env._prev_goal_dist = curr_dist.clone()
+    return improved.float()
+
+
+def r_htg(env: ManagerBasedEnv) -> torch.Tensor:
+    """Binary +1 if heading error to goal improved this step (R_htg).
+
+    Requires env._prev_heading_err (N,) initialised in reset.
+    Updates _prev_heading_err in-place each step.
+    """
+    if not hasattr(env, "_goal_pos") or not hasattr(env, "_prev_heading_err"):
+        return torch.zeros(env.num_envs, device=env.device)
+    robot    = env.scene["robot"]
+    diff_w        = torch.zeros(env.num_envs, 3, device=env.device)
+    diff_w[:, :2] = env._goal_pos - robot.data.root_pos_w[:, :2]
+    local    = quat_apply(quat_inv(robot.data.root_quat_w), diff_w)[:, :2]
+    angle    = torch.atan2(local[:, 1], local[:, 0])
+    curr_err = torch.abs(wrap_angle(angle))
+    improved = curr_err < env._prev_heading_err
+    env._prev_heading_err = curr_err.clone()
+    return improved.float()
+
+
+def r_local_wp(env: ManagerBasedEnv) -> torch.Tensor:
+    """Binary +1 when robot is within wp_reach_threshold of the current local waypoint (R_wp).
+
+    Fires on the step the robot enters the threshold; the env advances the
+    waypoint index AFTER super().step() so there is no double-counting.
+    """
+    if not hasattr(env, "_local_wp_pos"):
+        return torch.zeros(env.num_envs, device=env.device)
+    robot_xy = env.scene["robot"].data.root_pos_w[:, :2]
+    dist = torch.norm(env._local_wp_pos - robot_xy, dim=-1)
+    return (dist < env.cfg.wp_reach_threshold).float()
+
+
+def goal_proximity(env: ManagerBasedEnv) -> torch.Tensor:
+    """
+    Continuous reward based on distance to the final goal.
+
+    Returns exp(-dist / scale) in (0, 1]:
+      - 1.0 at goal (dist=0)
+      - 0.72 at 1m
+      - 0.51 at 2m
+      - 0.22 at 5m
+
+    Unlike progress_delta (which only rewards improvement),
+    this fires every step — giving signal even during sideways
+    detours around obstacles where heading/progress drop to 0.
+    """
+    if not hasattr(env, "_final_goal_pos"):
+        return torch.zeros(env.num_envs, device=env.device)
+    robot_xy = env.scene["robot"].data.root_pos_w[:, :2]
+    dist = torch.norm(env._final_goal_pos - robot_xy, dim=-1)
+    return torch.exp(-dist / 1.5)  # tighter scale: stronger pull in final 2m

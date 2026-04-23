@@ -1,0 +1,109 @@
+seed: 42
+
+# TD3 — off-policy, sample efficient, matches paper's algorithm choice.
+# TD3 reuses experience via replay buffer → faster convergence than PPO
+# for continuous control with moving obstacles.
+models:
+  separate: True
+
+  policy:
+    class: DeterministicMixin
+    clip_actions: True               # clip to action space bounds
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [256, 128]
+        activations: relu
+    output: ACTIONS
+
+  target_policy:
+    class: DeterministicMixin
+    clip_actions: True
+    network:
+      - name: net
+        input: OBSERVATIONS
+        layers: [256, 128]
+        activations: relu
+    output: ACTIONS
+
+  critic_1:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: STATES_ACTIONS
+        layers: [256, 128]
+        activations: relu
+    output: ONE
+
+  critic_2:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: STATES_ACTIONS
+        layers: [256, 128]
+        activations: relu
+    output: ONE
+
+  target_critic_1:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: STATES_ACTIONS
+        layers: [256, 128]
+        activations: relu
+    output: ONE
+
+  target_critic_2:
+    class: DeterministicMixin
+    clip_actions: False
+    network:
+      - name: net
+        input: STATES_ACTIONS
+        layers: [256, 128]
+        activations: relu
+    output: ONE
+
+memory:
+  class: RandomMemory
+  memory_size: 200000              # large buffer — 64 envs fill fast
+
+agent:
+  class: TD3
+  discount_factor: 0.99
+  polyak: 0.005
+  batch_size: 512
+  learning_rate: 3.0e-4
+  learning_rate_scheduler: null
+  random_timesteps: 10000          # take pure random actions first to fill buffer
+  learning_starts: 10000           # start learning only after buffer has 10k samples
+  grad_norm_clip: 0.5
+  exploration:
+    noise: "GaussianNoise"
+    noise_kwargs:
+      mean: 0.0
+      std: 0.2
+    initial_scale: 1.0             # start high — explore aggressively
+    final_scale: 0.05
+    timesteps: 400000              # anneal over first 400k steps
+  policy_delay: 2
+  smooth_regularization_noise: "GaussianNoise"
+  smooth_regularization_noise_kwargs:
+    mean: 0.0
+    std: 0.1
+  smooth_regularization_clip: 0.5
+  rewards_shaper_scale: 0.1
+  state_preprocessor: RunningStandardScaler
+  state_preprocessor_kwargs: null
+  experiment:
+    directory: ict_bot_nav_stage2
+    experiment_name: td3_stage2
+    write_interval: 500
+    checkpoint_interval: 5000
+
+trainer:
+  class: SequentialTrainer
+  timesteps: 800000
+  environment_info: log

@@ -9,5 +9,5 @@ class ActionsCfg:
     wheel_action: JointVelocityActionCfg = JointVelocityActionCfg(
         asset_name="robot",
         joint_names=["left_wheel_joint", "right_wheel_joint"],
-        scale=5.0,
+        scale=6.0,  # was 5.0 — higher action scale for faster response
     )

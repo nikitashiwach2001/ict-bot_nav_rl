@@ -18,8 +18,8 @@ ICT_BOT_CFG = ArticulationCfg(
         usd_path=_ICT_BOT_USD,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             rigid_body_enabled=True,
-            max_linear_velocity=0.5,
-            max_angular_velocity=6.25,
+            max_linear_velocity=0.8,
+            max_angular_velocity=8.0,
             max_depenetration_velocity=10.0,
             enable_gyroscopic_forces=True,
         ),
@@ -40,7 +40,7 @@ ICT_BOT_CFG = ArticulationCfg(
         "wheels": ImplicitActuatorCfg(
             joint_names_expr=["left_wheel_joint", "right_wheel_joint"],
             effort_limit_sim=10.0,
-            velocity_limit_sim=6.0,
+            velocity_limit_sim=8.0,
             stiffness=0.0,
             damping=5.0,
         ),
@@ -56,7 +56,7 @@ LIDAR_CFG = MultiMeshRayCasterCfg(
             is_shared=False,
             merge_prim_meshes=True,
             track_mesh_transforms=False,
-        )
+        ),
     ],
     pattern_cfg=patterns.LidarPatternCfg(
         channels=1,
