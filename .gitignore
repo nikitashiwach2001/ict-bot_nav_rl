@@ -75,3 +75,4 @@ tests/
 **/gelsight_r15_data/*
 # Added by code-review-graph
 .code-review-graph/
+episode_log.txt
